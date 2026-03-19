@@ -1,6 +1,32 @@
 {
   "manifest_version": 3,
   "name": "MaximumNotificações",
+<<<<<<< codex/add-notification-card-with-filters-b1oycu
+  "version": "2.0.0",
+  "description": "Monitora obrigações, processos e solicitações do Acessórias com um painel lateral moderno em tema light marsala.",
+  "permissions": [
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://app.acessorias.com/*",
+    "https://api.acessorias.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://app.acessorias.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+=======
   "version": "1.0.0",
   "description": "Extensão que exibe um painel lateral de notificações e alterações relacionadas ao usuário atual.",
   "content_scripts": [
@@ -8,6 +34,7 @@
       "matches": ["<all_urls>"],
       "js": ["content.js"],
       "css": ["content.css"],
+>>>>>>> main
       "run_at": "document_idle"
     }
   ]

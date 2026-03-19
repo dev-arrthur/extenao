@@ -1,16 +1,26 @@
 # MaximumNotificações
 
-Extensão Chrome/Chromium simples que injeta um botão no canto inferior esquerdo da página e abre um painel lateral de notificações com filtros, ordenação e marcação de itens lidos/não lidos.
+Extensão Chrome/Chromium Manifest V3 para o domínio `https://app.acessorias.com/*`.
 
-## Recursos
+## O que ela faz
 
-- Botão flutuante no canto inferior esquerdo.
-- Card lateral à esquerda com altura total e largura de 55%.
-- Exibição de alterações, comentários e menções ligadas ao usuário atual.
-- Filtro por notificações não lidas.
-- Filtro por data.
-- Ordenação por hora crescente e decrescente.
-- Persistência local do estado lido/não lido.
+- Injeta um botão no canto inferior esquerdo em qualquer página do domínio do Acessórias.
+- Abre um painel lateral à esquerda, em altura total, com largura de 55%.
+- Lê atualizações reais da API da Acessórias para monitorar:
+  - Obrigações / entregas
+  - Processos
+  - Solicitações
+  - Mudanças consolidadas nas obrigações das empresas
+- Exige que o usuário informe um **API Token** antes de mostrar os dados.
+- Mantém sincronização automática em background e permite atualização manual.
+- Usa tema claro com detalhes em vinho/marsala e microanimações.
+
+## Como obter o token
+
+1. Acesse o Sistema Acessórias.
+2. Clique na engrenagem no canto superior direito.
+3. Abra a opção **API Token**.
+4. Copie o token e cole no painel da extensão.
 
 ## Como instalar
 
