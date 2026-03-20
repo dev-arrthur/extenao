@@ -15,7 +15,9 @@
     unreadOnly: false,
     dateFilter: 'all',
     sortDirection: 'desc',
+    filterMode: 'all',
     tokenValue: '',
+    userIdentityValue: '',
     feed: {
       status: 'inactive',
       notifications: [],
@@ -37,6 +39,7 @@
     },
     settings: {
       hasToken: false,
+      userIdentity: '',
       lastTokenUpdatedAt: null
     },
     pageContext: {}
@@ -131,6 +134,7 @@
     settingsButton: null,
     pageLabel: null,
     syncLabel: null,
+    userBadge: null,
     total: null,
     requests: null,
     processes: null,
@@ -138,6 +142,7 @@
     searchInput: null,
     dateSelect: null,
     sortSelect: null,
+    filterSelect: null,
     unreadCheckbox: null,
     list: null,
     footer: null,
@@ -146,6 +151,7 @@
     settingsModal: null,
     settingsClose: null,
     tokenInput: null,
+    userIdentityInput: null,
     saveToken: null,
     clearToken: null,
     refreshButton: null,
@@ -189,6 +195,21 @@
     }
   };
 
+  const matchesFilterMode = (notification) => {
+    switch (state.filterMode) {
+      case 'requests':
+      case 'processes':
+      case 'obligations':
+        return notification.source === state.filterMode;
+      case 'comments':
+        return notification.category === 'comment';
+      case 'updates':
+        return notification.category === 'update' || notification.category === 'summary';
+      default:
+        return true;
+    }
+  };
+
   const getFilteredNotifications = () => {
     const predicate = getDatePredicate();
     const search = state.search.trim().toLowerCase();
@@ -196,6 +217,7 @@
     return (state.feed.notifications || [])
       .filter((notification) => !state.unreadOnly || notification.unread)
       .filter((notification) => predicate(new Date(notification.createdAt)))
+      .filter((notification) => matchesFilterMode(notification))
       .filter((notification) => {
         if (!search) {
           return true;
@@ -235,7 +257,17 @@
       elements.alert.innerHTML = `
         <div class="maximum-alert maximum-alert--warning">
           <strong>API inativa</strong>
-          <p>Clique na engrenagem para informar a chave da API. Enquanto ela não for informada, os dados não aparecem.</p>
+          <p>Clique na engrenagem para informar a chave da API e o usuário que deve ser rastreado.</p>
+        </div>
+      `;
+      return;
+    }
+
+    if (!state.settings.userIdentity) {
+      elements.alert.innerHTML = `
+        <div class="maximum-alert maximum-alert--warning">
+          <strong>Usuário não definido</strong>
+          <p>Preencha o nome do usuário na engrenagem para garantir que o feed mostre somente notificações relacionadas a ele.</p>
         </div>
       `;
       return;
@@ -247,6 +279,7 @@
   const renderStats = () => {
     const stats = state.feed.stats || { total: 0, unread: 0, bySource: {} };
     const connection = getConnectionState();
+    const effectiveUser = state.settings.userIdentity || state.pageContext?.inferredUser || currentUser;
 
     elements.toggleBadge.textContent = stats.unread || 0;
     elements.requests.textContent = stats.bySource?.requests || 0;
@@ -261,6 +294,7 @@
     elements.syncLabel.textContent = state.feed.syncing
       ? 'Sincronizando agora...'
       : formatRelativeSync(state.feed.lastSuccessfulSyncAt);
+    elements.userBadge.textContent = `Usuário filtrado: ${effectiveUser}`;
     elements.modalSyncInfo.textContent = state.feed.lastSuccessfulSyncAt
       ? `Última atualização real: ${formatDateTime(state.feed.lastSuccessfulSyncAt)}`
       : 'Ainda não houve leitura válida da API.';
@@ -277,7 +311,7 @@
         <div class="maximum-empty-state">
           <div class="maximum-empty-icon">⚙</div>
           <h3>Configure a API pela engrenagem</h3>
-          <p>Abra a engrenagem ao lado do status, cole a chave da API e salve para ativar as notificações.</p>
+          <p>Abra a engrenagem ao lado do status, cole a chave da API e informe o usuário que deve ser monitorado.</p>
         </div>
       `;
       elements.footer.textContent = 'Sem dados enquanto a integração estiver inativa.';
@@ -287,9 +321,9 @@
     if (!notifications.length) {
       elements.list.innerHTML = `
         <div class="maximum-empty-state">
-          <div class="maximum-empty-icon">✨</div>
-          <h3>Nada novo no filtro atual</h3>
-          <p>Você pode atualizar manualmente pela engrenagem ou alterar os filtros acima.</p>
+          <div class="maximum-empty-icon">👤</div>
+          <h3>Nenhuma notificação para este usuário</h3>
+          <p>O feed agora mostra somente itens que envolvem o usuário filtrado. Ajuste o nome do usuário ou os filtros se necessário.</p>
         </div>
       `;
       elements.footer.textContent = '0 resultados exibidos';
@@ -316,6 +350,9 @@
           <button type="button" class="maximum-secondary-button" data-action="toggle-read" data-id="${notification.id}" data-next-unread="${!notification.unread}">
             ${notification.unread ? 'Marcar como lida' : 'Marcar como não lida'}
           </button>
+          <button type="button" class="maximum-eye-button" data-action="open-item" data-url="${notification.meta?.openUrl || ''}" aria-label="Visualizar item no sistema">
+            👁
+          </button>
         </div>
       </article>
     `).join('');
@@ -328,6 +365,7 @@
     elements.settingsBackdrop.dataset.open = String(state.settingsOpen);
     elements.settingsModal.dataset.open = String(state.settingsOpen);
     elements.tokenInput.value = state.tokenValue;
+    elements.userIdentityInput.value = state.userIdentityValue;
     elements.clearToken.disabled = !state.settings.hasToken;
     elements.markAllRead.disabled = !(state.feed.stats?.unread > 0);
   };
@@ -338,6 +376,7 @@
     elements.searchInput.value = state.search;
     elements.dateSelect.value = state.dateFilter;
     elements.sortSelect.value = state.sortDirection;
+    elements.filterSelect.value = state.filterMode;
     elements.unreadCheckbox.checked = state.unreadOnly;
     renderStats();
     renderAlert();
@@ -352,6 +391,7 @@
       state.feed = response.feed;
       state.settings = response.settings;
       state.pageContext = response.pageContext || {};
+      state.userIdentityValue = response.settings.userIdentity || state.pageContext.inferredUser || currentUser;
     } catch (error) {
       state.feed.errorMessage = error.message;
       state.feed.status = 'inactive';
@@ -378,6 +418,7 @@
               <span class="maximum-brand-title--black">maximum</span><span class="maximum-brand-title--gradient">Notificações</span>
             </h1>
             <span class="maximum-page-label"></span>
+            <span class="maximum-user-badge"></span>
           </div>
           <div class="maximum-header-actions">
             <div class="maximum-status-pill" data-tone="inactive">
@@ -418,7 +459,18 @@
           <input id="maximum-search" type="search" placeholder="Busque por empresa, processo, obrigação ou solicitação" />
         </div>
         <div class="maximum-input-group">
-          <label for="maximum-date">Filtrar</label>
+          <label for="maximum-filter">Filtrar</label>
+          <select id="maximum-filter">
+            <option value="all">Tudo</option>
+            <option value="requests">Solicitações</option>
+            <option value="processes">Processos</option>
+            <option value="obligations">Obrigações</option>
+            <option value="comments">Comentários</option>
+            <option value="updates">Atualizações</option>
+          </select>
+        </div>
+        <div class="maximum-input-group">
+          <label for="maximum-date">Data</label>
           <select id="maximum-date">
             <option value="all">Todas</option>
             <option value="today">Hoje</option>
@@ -452,7 +504,7 @@
       <div class="maximum-settings-modal__header">
         <div>
           <h2>Configurar chave da API</h2>
-          <p>Informe o token gerado no Acessórias pela engrenagem do canto superior direito.</p>
+          <p>Informe o token e confirme qual usuário deve ser monitorado para o feed mostrar somente notificações completas relacionadas a ele.</p>
         </div>
         <button type="button" class="maximum-icon-button maximum-icon-button--close" aria-label="Fechar modal">✕</button>
       </div>
@@ -460,6 +512,10 @@
         <div class="maximum-input-group">
           <label for="maximum-token-input">Chave API</label>
           <input id="maximum-token-input" type="password" placeholder="Cole aqui a chave da API" autocomplete="off" />
+        </div>
+        <div class="maximum-input-group">
+          <label for="maximum-user-identity">Usuário monitorado</label>
+          <input id="maximum-user-identity" type="text" placeholder="Ex.: João Silva" autocomplete="off" />
         </div>
         <p class="maximum-modal-sync-info"></p>
       </div>
@@ -484,11 +540,13 @@
   elements.settingsButton = root.querySelector('.maximum-icon-button');
   elements.pageLabel = root.querySelector('.maximum-page-label');
   elements.syncLabel = root.querySelector('.maximum-sync-label');
+  elements.userBadge = root.querySelector('.maximum-user-badge');
   elements.requests = root.querySelector('[data-kpi="requests"]');
   elements.processes = root.querySelector('[data-kpi="processes"]');
   elements.obligations = root.querySelector('[data-kpi="obligations"]');
   elements.total = root.querySelector('[data-kpi="total"]');
   elements.searchInput = root.querySelector('#maximum-search');
+  elements.filterSelect = root.querySelector('#maximum-filter');
   elements.dateSelect = root.querySelector('#maximum-date');
   elements.sortSelect = root.querySelector('#maximum-sort');
   elements.unreadCheckbox = root.querySelector('#maximum-unread-only');
@@ -499,6 +557,7 @@
   elements.settingsModal = root.querySelector('.maximum-settings-modal');
   elements.settingsClose = root.querySelector('.maximum-icon-button--close');
   elements.tokenInput = root.querySelector('#maximum-token-input');
+  elements.userIdentityInput = root.querySelector('#maximum-user-identity');
   elements.saveToken = root.querySelector('[data-action="save-token"]');
   elements.clearToken = root.querySelector('[data-action="clear-token"]');
   elements.refreshButton = root.querySelector('[data-action="refresh"]');
@@ -524,11 +583,13 @@
 
   elements.saveToken.addEventListener('click', async () => {
     const token = elements.tokenInput.value.trim();
+    const userIdentity = elements.userIdentityInput.value.trim();
     state.tokenValue = token;
+    state.userIdentityValue = userIdentity;
     elements.saveToken.disabled = true;
 
     try {
-      const response = await runtimeMessage({ type: 'maximum:save-token', token });
+      const response = await runtimeMessage({ type: 'maximum:save-token', token, userIdentity });
       state.feed = response.feed;
       state.settings = response.settings;
       state.pageContext = response.pageContext || state.pageContext;
@@ -588,6 +649,11 @@
     render();
   });
 
+  elements.filterSelect.addEventListener('change', (event) => {
+    state.filterMode = event.target.value;
+    render();
+  });
+
   elements.dateSelect.addEventListener('change', (event) => {
     state.dateFilter = event.target.value;
     render();
@@ -604,6 +670,15 @@
   });
 
   elements.list.addEventListener('click', async (event) => {
+    const eyeButton = event.target.closest('[data-action="open-item"]');
+    if (eyeButton) {
+      const url = eyeButton.dataset.url;
+      if (url) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
+      return;
+    }
+
     const button = event.target.closest('[data-action="toggle-read"]');
     if (!button) {
       return;
@@ -648,8 +723,10 @@
     if (changes.maximum_settings?.newValue) {
       state.settings = {
         hasToken: Boolean(changes.maximum_settings.newValue.apiToken),
+        userIdentity: changes.maximum_settings.newValue.userIdentity || '',
         lastTokenUpdatedAt: changes.maximum_settings.newValue.lastTokenUpdatedAt
       };
+      state.userIdentityValue = state.settings.userIdentity || state.pageContext?.inferredUser || currentUser;
     }
 
     if (changes.maximum_page_context?.newValue) {

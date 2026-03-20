@@ -44,7 +44,7 @@ async function handleMessage(message) {
     case 'maximum:get-state':
       return getClientState();
     case 'maximum:save-token':
-      return saveToken(message.token);
+      return saveToken(message.token, message.userIdentity);
     case 'maximum:clear-token':
       return clearToken();
     case 'maximum:refresh':
@@ -132,11 +132,57 @@ function summarizeFeed(notifications) {
   });
 }
 
+function normalizeText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function createUserAliases(settings, pageContext) {
+  const baseIdentity = normalizeText(settings.userIdentity || pageContext.inferredUser || '');
+  if (!baseIdentity) {
+    return [];
+  }
+
+  const aliases = new Set([baseIdentity]);
+  baseIdentity.split(/\s+/).filter((part) => part.length > 2).forEach((part) => aliases.add(part));
+  return Array.from(aliases);
+}
+
+function matchesAliases(candidates, aliases) {
+  if (!aliases.length) {
+    return true;
+  }
+
+  return candidates
+    .map((candidate) => normalizeText(candidate))
+    .filter(Boolean)
+    .some((candidate) => aliases.some((alias) => candidate.includes(alias) || alias.includes(candidate)));
+}
+
+function buildOpenUrl(source, sourceId, pageContext) {
+  const origin = pageContext.currentUrl
+    ? new URL(pageContext.currentUrl).origin
+    : 'https://app.acessorias.com';
+  const url = new URL('/sysmain.php', origin);
+  url.searchParams.set('view', source);
+  url.searchParams.set('id', String(sourceId || ''));
+  return url.toString();
+}
+
+function filterByUser(notifications, settings, pageContext) {
+  const aliases = createUserAliases(settings, pageContext);
+  return notifications.filter((notification) => matchesAliases(notification.meta?.userCandidates || [], aliases));
+}
+
 async function getStoredState() {
   const stored = await chrome.storage.local.get(Object.values(STORAGE_KEYS));
   return {
     settings: stored[STORAGE_KEYS.settings] || {
       apiToken: '',
+      userIdentity: '',
       lastTokenUpdatedAt: null
     },
     feed: stored[STORAGE_KEYS.feed] || {
@@ -169,6 +215,7 @@ async function getClientState() {
   return {
     settings: {
       hasToken: Boolean(settings.apiToken),
+      userIdentity: settings.userIdentity || '',
       lastTokenUpdatedAt: settings.lastTokenUpdatedAt
     },
     feed,
@@ -176,11 +223,13 @@ async function getClientState() {
   };
 }
 
-async function saveToken(token) {
+async function saveToken(token, userIdentity) {
   const normalizedToken = String(token || '').trim();
+  const normalizedUserIdentity = String(userIdentity || '').trim();
   await chrome.storage.local.set({
     [STORAGE_KEYS.settings]: {
       apiToken: normalizedToken,
+      userIdentity: normalizedUserIdentity,
       lastTokenUpdatedAt: normalizedToken ? new Date().toISOString() : null
     }
   });
@@ -189,10 +238,11 @@ async function saveToken(token) {
 }
 
 async function clearToken() {
-  const { feed } = await getStoredState();
+  const { feed, settings } = await getStoredState();
   await chrome.storage.local.set({
     [STORAGE_KEYS.settings]: {
       apiToken: '',
+      userIdentity: settings.userIdentity || '',
       lastTokenUpdatedAt: null
     }
   });
@@ -329,7 +379,7 @@ async function fetchPaged(getPath, token, maxPages) {
   return allItems;
 }
 
-function buildRequestNotifications(requests, lastSuccessfulSyncAt) {
+function buildRequestNotifications(requests, lastSuccessfulSyncAt, pageContext) {
   const cutoff = new Date(lastSuccessfulSyncAt || Date.now() - 24 * 60 * 60 * 1000).getTime();
 
   return requests
@@ -346,14 +396,14 @@ function buildRequestNotifications(requests, lastSuccessfulSyncAt) {
       const assignees = [
         ...(request.SolOfficeResp || []),
         ...(request.SolEmpResp || [])
-      ].filter(Boolean).join(', ');
+      ].filter(Boolean);
 
       return {
         id: `request:${request.SolID}:${request.SolDHUAt || request.SolDHAbertura}`,
         source: 'requests',
         category: latestInteraction ? 'comment' : 'update',
         title: `Solicitação atualizada: ${request.SolAssunto || `#${request.SolID}`}`,
-        message: latestInteraction?.CmtText || `Status ${status}${assignees ? ` • responsáveis: ${assignees}` : ''}`,
+        message: latestInteraction?.CmtText || `Status ${status}${assignees.length ? ` • responsáveis: ${assignees.join(', ')}` : ''}`,
         context: `${request.EmpNome || 'Empresa não identificada'} • ${request.DptoNome || 'Sem departamento'}`,
         author: latestInteraction?.CmtUsuario || request.SolUsuario || 'Sistema Acessórias',
         createdAt,
@@ -361,14 +411,20 @@ function buildRequestNotifications(requests, lastSuccessfulSyncAt) {
         meta: {
           status,
           sourceId: request.SolID,
+          openUrl: buildOpenUrl('requests', request.SolID, pageContext),
           company: request.EmpNome || '',
-          department: request.DptoNome || ''
+          department: request.DptoNome || '',
+          userCandidates: [
+            latestInteraction?.CmtUsuario,
+            request.SolUsuario,
+            ...assignees
+          ]
         }
       };
     });
 }
 
-function buildProcessNotifications(processes, lastSuccessfulSyncAt) {
+function buildProcessNotifications(processes, lastSuccessfulSyncAt, pageContext) {
   const cutoff = new Date(lastSuccessfulSyncAt || Date.now() - 24 * 60 * 60 * 1000).getTime();
 
   return processes
@@ -390,12 +446,17 @@ function buildProcessNotifications(processes, lastSuccessfulSyncAt) {
         status: process.ProcStatus || '',
         progress: process.ProcPorcentagem || '',
         sourceId: process.ProcID,
-        company: process.EmpNome || ''
+        openUrl: buildOpenUrl('processes', process.ProcID, pageContext),
+        company: process.EmpNome || '',
+        userCandidates: [
+          process.ProcCriador,
+          process.ProcGestor
+        ]
       }
     }));
 }
 
-function buildDeliveryNotifications(deliveryGroups, lastSuccessfulSyncAt) {
+function buildDeliveryNotifications(deliveryGroups, lastSuccessfulSyncAt, pageContext) {
   const cutoff = new Date(lastSuccessfulSyncAt || Date.now() - 24 * 60 * 60 * 1000).getTime();
 
   return deliveryGroups.flatMap((company) => (company.Entregas || [])
@@ -417,7 +478,12 @@ function buildDeliveryNotifications(deliveryGroups, lastSuccessfulSyncAt) {
         status: delivery.Status || '',
         deadline: delivery.EntDtPrazo || '',
         sourceId: delivery.Config?.EntID || delivery.Nome,
-        company: company.Razao || company.Fantasia || ''
+        openUrl: buildOpenUrl('obligations', delivery.Config?.EntID || delivery.Nome, pageContext),
+        company: company.Razao || company.Fantasia || '',
+        userCandidates: [
+          delivery.Config?.RespEntrega,
+          delivery.Config?.RespPrazo
+        ]
       }
     })));
 }
@@ -432,7 +498,7 @@ function hashObligationStatus(obligation) {
   ].join('|');
 }
 
-function buildCompanyNotifications(companies, previousSnapshot, shouldCreateNotifications) {
+function buildCompanyNotifications(companies, previousSnapshot, shouldCreateNotifications, pageContext) {
   const nextSnapshot = {};
   const notifications = [];
 
@@ -461,7 +527,9 @@ function buildCompanyNotifications(companies, previousSnapshot, shouldCreateNoti
           meta: {
             status: obligation.Status || '',
             company: company.Razao || company.Fantasia || '',
-            sourceId: obligation.Nome
+            sourceId: obligation.Nome,
+            openUrl: buildOpenUrl('companies', obligation.Nome, pageContext),
+            userCandidates: []
           }
         });
       }
@@ -475,7 +543,7 @@ function buildCompanyNotifications(companies, previousSnapshot, shouldCreateNoti
 }
 
 async function syncFeed(reason, options = {}) {
-  const { settings, feed } = await getStoredState();
+  const { settings, feed, pageContext } = await getStoredState();
 
   if (!settings.apiToken) {
     await persistFeed({
@@ -517,23 +585,25 @@ async function syncFeed(reason, options = {}) {
         : Promise.resolve([])
     ]);
 
-    const companyDiff = buildCompanyNotifications(companies, feed.companySnapshot || {}, shouldRefreshCompanies && Boolean(feed.lastCompaniesSyncAt));
+    const companyDiff = buildCompanyNotifications(companies, feed.companySnapshot || {}, shouldRefreshCompanies && Boolean(feed.lastCompaniesSyncAt), pageContext);
 
     const incomingNotifications = uniqueBy([
-      ...buildDeliveryNotifications(deliveries, lastSuccessfulSyncAt),
-      ...buildProcessNotifications(processes, lastSuccessfulSyncAt),
-      ...buildRequestNotifications(requests, lastSuccessfulSyncAt),
+      ...buildDeliveryNotifications(deliveries, lastSuccessfulSyncAt, pageContext),
+      ...buildProcessNotifications(processes, lastSuccessfulSyncAt, pageContext),
+      ...buildRequestNotifications(requests, lastSuccessfulSyncAt, pageContext),
       ...companyDiff.notifications
     ], (item) => item.id);
 
+    const userFilteredNotifications = filterByUser(incomingNotifications, settings, pageContext);
     const existingUnreadMap = new Map((feed.notifications || []).map((item) => [item.id, item.unread]));
     const merged = uniqueBy([
-      ...incomingNotifications.map((item) => ({
+      ...userFilteredNotifications.map((item) => ({
         ...item,
         unread: existingUnreadMap.has(item.id) ? existingUnreadMap.get(item.id) : item.unread
       })),
       ...(feed.notifications || [])
     ], (item) => item.id)
+      .filter((item) => matchesAliases(item.meta?.userCandidates || [], createUserAliases(settings, pageContext)))
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
       .slice(0, MAX_NOTIFICATIONS);
 
