@@ -140,7 +140,7 @@ async function getStoredState() {
       lastTokenUpdatedAt: null
     },
     feed: stored[STORAGE_KEYS.feed] || {
-      status: 'needs_token',
+      status: 'inactive',
       notifications: [],
       errorMessage: '',
       tokenMissing: true,
@@ -198,7 +198,7 @@ async function clearToken() {
   });
   await persistFeed({
     ...feed,
-    status: 'needs_token',
+    status: 'inactive',
     tokenMissing: true,
     syncing: false,
     errorMessage: '',
@@ -257,19 +257,60 @@ async function markAllRead() {
   return getClientState();
 }
 
+function normalizeApiArray(data) {
+  if (Array.isArray(data)) {
+    return data;
+  }
+
+  if (Array.isArray(data?.data)) {
+    return data.data;
+  }
+
+  if (Array.isArray(data?.results)) {
+    return data.results;
+  }
+
+  if (Array.isArray(data?.items)) {
+    return data.items;
+  }
+
+  return [];
+}
+
+async function parseApiBody(response, path) {
+  const text = await response.text();
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  const trimmed = text.trim();
+
+  if (!response.ok) {
+    const excerpt = trimmed.replace(/\s+/g, ' ').slice(0, 220) || 'Sem corpo na resposta.';
+    throw new Error(`API ${response.status} em ${path}: ${excerpt}`);
+  }
+
+  if (!trimmed) {
+    return [];
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    if (trimmed.startsWith('<')) {
+      throw new Error(`A API retornou HTML em vez de JSON para ${path}. Verifique se o token está correto e ativo.`);
+    }
+
+    throw new Error(`A API retornou conteúdo inválido para ${path}${contentType ? ` (${contentType})` : ''}.`);
+  }
+}
+
 async function fetchJson(path, token) {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
-      Authorization: `Bearer ${token}`
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json, text/plain, */*'
     }
   });
 
-  if (!response.ok) {
-    const responseText = await response.text();
-    throw new Error(`API ${response.status}: ${responseText.slice(0, 180) || 'Falha ao consultar a API.'}`);
-  }
-
-  return response.json();
+  return parseApiBody(response, path);
 }
 
 async function fetchPaged(getPath, token, maxPages) {
@@ -277,7 +318,7 @@ async function fetchPaged(getPath, token, maxPages) {
 
   for (let page = 1; page <= maxPages; page += 1) {
     const data = await fetchJson(getPath(page), token);
-    const items = Array.isArray(data) ? data : [];
+    const items = normalizeApiArray(data);
     if (!items.length) {
       break;
     }
@@ -366,7 +407,7 @@ function buildDeliveryNotifications(deliveryGroups, lastSuccessfulSyncAt) {
       id: `delivery:${company.Identificador}:${delivery.Config?.EntID || delivery.Nome}:${delivery.EntLastDH || delivery.EntDtPrazo}`,
       source: 'obligations',
       category: 'obligation',
-      title: `Obrigação/entrega alterada: ${delivery.Nome}`,
+      title: `Obrigação alterada: ${delivery.Nome}`,
       message: `${delivery.Status || 'Sem status'} • prazo ${delivery.EntDtPrazo || 'não informado'}${delivery.EntDtEntrega && delivery.EntDtEntrega !== '0000-00-00' ? ` • entrega ${delivery.EntDtEntrega}` : ''}`,
       context: `${company.Razao || company.Fantasia || company.Identificador} • ${delivery.Config?.DptoNome || 'Sem departamento'}`,
       author: delivery.Config?.RespEntrega || delivery.Config?.RespPrazo || 'Sistema Acessórias',
@@ -411,7 +452,7 @@ function buildCompanyNotifications(companies, previousSnapshot, shouldCreateNoti
           id: `company:${companyKey}:${obligationKey}:${nextHash}:${Date.now()}`,
           source: 'companies',
           category: 'summary',
-          title: `Mudança em obrigação consolidada: ${obligation.Nome}`,
+          title: `Mudança consolidada: ${obligation.Nome}`,
           message: `Status ${obligation.Status || 'sem status'} • atrasadas ${obligation.Atrasadas || '0'} • próximas 30d ${obligation.Proximos30D || '0'}`,
           context: `${company.Razao || company.Fantasia || company.Identificador} • visão consolidada das obrigações`,
           author: 'Sistema Acessórias',
@@ -439,7 +480,7 @@ async function syncFeed(reason, options = {}) {
   if (!settings.apiToken) {
     await persistFeed({
       ...feed,
-      status: 'needs_token',
+      status: 'inactive',
       tokenMissing: true,
       syncing: false,
       errorMessage: '',
@@ -459,7 +500,9 @@ async function syncFeed(reason, options = {}) {
   try {
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const lastSuccessfulSyncAt = options.forceFullSync ? new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString() : (feed.lastSuccessfulSyncAt || new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString());
+    const lastSuccessfulSyncAt = options.forceFullSync
+      ? new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
+      : (feed.lastSuccessfulSyncAt || new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString());
     const lastSyncDateTime = formatApiDateTime(new Date(lastSuccessfulSyncAt));
     const shouldRefreshCompanies = !feed.lastCompaniesSyncAt
       || (new Date(now).getTime() - new Date(feed.lastCompaniesSyncAt).getTime()) >= COMPANY_SCAN_INTERVAL_MINUTES * 60 * 1000
@@ -498,7 +541,7 @@ async function syncFeed(reason, options = {}) {
       ...feed,
       syncing: false,
       tokenMissing: false,
-      status: incomingNotifications.length ? 'updated' : 'idle',
+      status: 'connected',
       errorMessage: '',
       notifications: merged,
       companySnapshot: shouldRefreshCompanies ? companyDiff.snapshot : (feed.companySnapshot || {}),
@@ -512,7 +555,7 @@ async function syncFeed(reason, options = {}) {
       ...feed,
       syncing: false,
       tokenMissing: false,
-      status: 'error',
+      status: 'inactive',
       errorMessage: error.message,
       lastSyncAt: new Date().toISOString()
     });

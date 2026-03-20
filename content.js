@@ -9,6 +9,7 @@
 
   const state = {
     open: false,
+    settingsOpen: false,
     loading: true,
     search: '',
     unreadOnly: false,
@@ -16,7 +17,7 @@
     sortDirection: 'desc',
     tokenValue: '',
     feed: {
-      status: 'needs_token',
+      status: 'inactive',
       notifications: [],
       tokenMissing: true,
       syncing: false,
@@ -90,7 +91,7 @@
 
   const formatRelativeSync = (value) => {
     if (!value) {
-      return 'Aguardando primeira sincronização';
+      return 'Ainda sem sincronização';
     }
 
     const diffInMinutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60000));
@@ -101,8 +102,22 @@
       return `Sincronizado há ${diffInMinutes} min`;
     }
 
-    const diffInHours = Math.round(diffInMinutes / 60);
-    return `Sincronizado há ${diffInHours} h`;
+    return `Sincronizado há ${Math.round(diffInMinutes / 60)} h`;
+  };
+
+  const sourceLabel = {
+    requests: 'Solicitações',
+    processes: 'Processos',
+    obligations: 'Obrigações',
+    companies: 'Consolidação'
+  };
+
+  const categoryLabel = {
+    update: 'Atualização',
+    comment: 'Comentário',
+    process: 'Processo',
+    obligation: 'Obrigação',
+    summary: 'Resumo'
   };
 
   const elements = {
@@ -110,44 +125,46 @@
     toggleBadge: null,
     overlay: null,
     panel: null,
-    syncPill: null,
-    tokenNotice: null,
-    tokenForm: null,
-    tokenInput: null,
-    saveTokenButton: null,
-    clearTokenButton: null,
-    refreshButton: null,
-    markAllReadButton: null,
+    closeButton: null,
+    statusText: null,
+    statusPill: null,
+    settingsButton: null,
+    pageLabel: null,
+    syncLabel: null,
+    total: null,
+    requests: null,
+    processes: null,
+    obligations: null,
     searchInput: null,
     dateSelect: null,
     sortSelect: null,
     unreadCheckbox: null,
     list: null,
     footer: null,
-    statsTotal: null,
-    statsUnread: null,
-    statsObligations: null,
-    statsProcesses: null,
-    statsRequests: null,
-    statsCompanies: null,
-    pageLabel: null,
-    lastSyncLabel: null,
-    closeButton: null
+    alert: null,
+    settingsBackdrop: null,
+    settingsModal: null,
+    settingsClose: null,
+    tokenInput: null,
+    saveToken: null,
+    clearToken: null,
+    refreshButton: null,
+    markAllRead: null,
+    modalSyncInfo: null
   };
 
-  const categoryLabel = {
-    obligation: 'Obrigação',
-    process: 'Processo',
-    comment: 'Comentário',
-    update: 'Atualização',
-    summary: 'Resumo'
-  };
+  const getConnectionState = () => {
+    if (state.settings.hasToken && !state.feed.errorMessage) {
+      return {
+        text: 'OK',
+        tone: 'ok'
+      };
+    }
 
-  const sourceLabel = {
-    obligations: 'Obrigações',
-    processes: 'Processos',
-    requests: 'Solicitações',
-    companies: 'Consolidação'
+    return {
+      text: 'Inativo',
+      tone: 'inactive'
+    };
   };
 
   const getDatePredicate = () => {
@@ -199,55 +216,57 @@
       });
   };
 
+  const renderAlert = () => {
+    if (!elements.alert) {
+      return;
+    }
+
+    if (state.feed.errorMessage) {
+      elements.alert.innerHTML = `
+        <div class="maximum-alert maximum-alert--error">
+          <strong>Falha ao consultar a API</strong>
+          <p>${state.feed.errorMessage}</p>
+        </div>
+      `;
+      return;
+    }
+
+    if (!state.settings.hasToken || state.feed.tokenMissing) {
+      elements.alert.innerHTML = `
+        <div class="maximum-alert maximum-alert--warning">
+          <strong>API inativa</strong>
+          <p>Clique na engrenagem para informar a chave da API. Enquanto ela não for informada, os dados não aparecem.</p>
+        </div>
+      `;
+      return;
+    }
+
+    elements.alert.innerHTML = '';
+  };
+
   const renderStats = () => {
     const stats = state.feed.stats || { total: 0, unread: 0, bySource: {} };
+    const connection = getConnectionState();
+
     elements.toggleBadge.textContent = stats.unread || 0;
-    elements.statsTotal.textContent = stats.total || 0;
-    elements.statsUnread.textContent = stats.unread || 0;
-    elements.statsObligations.textContent = stats.bySource?.obligations || 0;
-    elements.statsProcesses.textContent = stats.bySource?.processes || 0;
-    elements.statsRequests.textContent = stats.bySource?.requests || 0;
-    elements.statsCompanies.textContent = stats.bySource?.companies || 0;
+    elements.requests.textContent = stats.bySource?.requests || 0;
+    elements.processes.textContent = stats.bySource?.processes || 0;
+    elements.obligations.textContent = stats.bySource?.obligations || 0;
+    elements.total.textContent = stats.total || 0;
+    elements.statusText.textContent = connection.text;
+    elements.statusPill.dataset.tone = connection.tone;
+    elements.pageLabel.textContent = state.pageContext?.currentTitle
+      ? `Página: ${state.pageContext.currentTitle}`
+      : 'Página: app.acessorias.com';
+    elements.syncLabel.textContent = state.feed.syncing
+      ? 'Sincronizando agora...'
+      : formatRelativeSync(state.feed.lastSuccessfulSyncAt);
+    elements.modalSyncInfo.textContent = state.feed.lastSuccessfulSyncAt
+      ? `Última atualização real: ${formatDateTime(state.feed.lastSuccessfulSyncAt)}`
+      : 'Ainda não houve leitura válida da API.';
 
     root.dataset.hasUnread = String((stats.unread || 0) > 0);
     root.dataset.syncing = String(Boolean(state.feed.syncing));
-    elements.syncPill.textContent = state.feed.syncing ? 'Sincronizando...' : formatRelativeSync(state.feed.lastSuccessfulSyncAt);
-    elements.lastSyncLabel.textContent = state.feed.lastSuccessfulSyncAt
-      ? `Última leitura real da API: ${formatDateTime(state.feed.lastSuccessfulSyncAt)}`
-      : 'Sem leitura da API ainda';
-    elements.pageLabel.textContent = state.pageContext?.currentTitle
-      ? `Página atual: ${state.pageContext.currentTitle}`
-      : 'Página atual: app.acessorias.com';
-  };
-
-  const renderTokenState = () => {
-    const needsToken = !state.settings.hasToken || state.feed.tokenMissing;
-    const errorMessage = state.feed.errorMessage;
-
-    elements.tokenNotice.innerHTML = needsToken
-      ? `
-        <div class="maximum-token-callout is-warning">
-          <strong>API Token obrigatório</strong>
-          <p>Para exibir atualizações reais de Obrigações, Processos, Solicitações e mudanças consolidadas, abra o Acessórias, vá na engrenagem do canto superior direito e gere seu API Token. Depois cole o token abaixo.</p>
-        </div>
-      `
-      : errorMessage
-        ? `
-          <div class="maximum-token-callout is-error">
-            <strong>Falha ao consultar a API</strong>
-            <p>${errorMessage}</p>
-          </div>
-        `
-        : `
-          <div class="maximum-token-callout is-success">
-            <strong>API conectada</strong>
-            <p>O painel está lendo atualizações reais do domínio Acessórias e continuará verificando mudanças automaticamente enquanto a extensão estiver ativa.</p>
-          </div>
-        `;
-
-    elements.tokenInput.value = state.tokenValue;
-    elements.clearTokenButton.disabled = !state.settings.hasToken;
-    elements.markAllReadButton.disabled = !(state.feed.stats?.unread > 0);
   };
 
   const renderList = () => {
@@ -256,21 +275,21 @@
     if (!state.settings.hasToken || state.feed.tokenMissing) {
       elements.list.innerHTML = `
         <div class="maximum-empty-state">
-          <div class="maximum-empty-icon">🔐</div>
-          <h3>Informe o token para começar</h3>
-          <p>Enquanto o API Token não for informado, as atualizações reais não aparecem.</p>
+          <div class="maximum-empty-icon">⚙</div>
+          <h3>Configure a API pela engrenagem</h3>
+          <p>Abra a engrenagem ao lado do status, cole a chave da API e salve para ativar as notificações.</p>
         </div>
       `;
-      elements.footer.textContent = 'Sem dados reais até a configuração do token.';
+      elements.footer.textContent = 'Sem dados enquanto a integração estiver inativa.';
       return;
     }
 
-    if (notifications.length === 0) {
+    if (!notifications.length) {
       elements.list.innerHTML = `
         <div class="maximum-empty-state">
           <div class="maximum-empty-icon">✨</div>
-          <h3>Nenhuma alteração no filtro atual</h3>
-          <p>Ajuste os filtros ou clique em atualizar agora para forçar uma nova leitura da API.</p>
+          <h3>Nada novo no filtro atual</h3>
+          <p>Você pode atualizar manualmente pela engrenagem ou alterar os filtros acima.</p>
         </div>
       `;
       elements.footer.textContent = '0 resultados exibidos';
@@ -305,6 +324,14 @@
     elements.footer.textContent = `${notifications.length} itens exibidos • ${unreadInView} não lidos nesta visualização`;
   };
 
+  const renderModal = () => {
+    elements.settingsBackdrop.dataset.open = String(state.settingsOpen);
+    elements.settingsModal.dataset.open = String(state.settingsOpen);
+    elements.tokenInput.value = state.tokenValue;
+    elements.clearToken.disabled = !state.settings.hasToken;
+    elements.markAllRead.disabled = !(state.feed.stats?.unread > 0);
+  };
+
   const render = () => {
     elements.overlay.dataset.open = String(state.open);
     elements.panel.dataset.open = String(state.open);
@@ -313,8 +340,9 @@
     elements.sortSelect.value = state.sortDirection;
     elements.unreadCheckbox.checked = state.unreadOnly;
     renderStats();
-    renderTokenState();
+    renderAlert();
     renderList();
+    renderModal();
   };
 
   const hydrate = async () => {
@@ -326,7 +354,7 @@
       state.pageContext = response.pageContext || {};
     } catch (error) {
       state.feed.errorMessage = error.message;
-      state.feed.status = 'error';
+      state.feed.status = 'inactive';
     } finally {
       state.loading = false;
       render();
@@ -339,74 +367,58 @@
       <span class="maximum-toggle-text">Maximum</span>
       <span class="maximum-toggle-badge">0</span>
     </button>
+
     <div class="maximum-overlay" data-open="false"></div>
+
     <aside class="maximum-panel" data-open="false" aria-label="Painel MaximumNotificações">
-      <header class="maximum-hero">
-        <div class="maximum-hero-row">
-          <div>
-            <span class="maximum-hero-kicker">Monitoramento inteligente</span>
-            <h1>maximumNotificações</h1>
-            <p class="maximum-hero-subtitle">Divisor</p>
+      <header class="maximum-header-shell">
+        <div class="maximum-header-row">
+          <div class="maximum-brand-block">
+            <h1 class="maximum-brand-title">
+              <span class="maximum-brand-title--black">maximum</span><span class="maximum-brand-title--gradient">Notificações</span>
+            </h1>
+            <span class="maximum-page-label"></span>
           </div>
-          <button type="button" class="maximum-close-button">Fechar</button>
+          <div class="maximum-header-actions">
+            <div class="maximum-status-pill" data-tone="inactive">
+              <span>Status:</span>
+              <strong class="maximum-status-text">Inativo</strong>
+            </div>
+            <button type="button" class="maximum-icon-button" aria-label="Configurar chave da API">⚙</button>
+            <button type="button" class="maximum-close-button">Fechar</button>
+          </div>
         </div>
-        <p class="maximum-hero-description">Mostra notificações reais de atualizações de Obrigações, Processos, Solicitações e mudanças consolidadas de tudo o que está relacionado ao ambiente do usuário dentro do domínio app.acessorias.com.</p>
-        <div class="maximum-hero-status-row">
-          <div class="maximum-sync-pill">Sincronizando...</div>
-          <div class="maximum-page-label"></div>
-        </div>
-        <div class="maximum-stats-grid">
-          <article class="maximum-stat-card">
-            <span>Total</span>
-            <strong data-stat="total">0</strong>
-          </article>
-          <article class="maximum-stat-card">
-            <span>Não lidas</span>
-            <strong data-stat="unread">0</strong>
-          </article>
-          <article class="maximum-stat-card">
-            <span>Obrigações</span>
-            <strong data-stat="obligations">0</strong>
-          </article>
-          <article class="maximum-stat-card">
-            <span>Processos</span>
-            <strong data-stat="processes">0</strong>
-          </article>
-          <article class="maximum-stat-card">
+        <div class="maximum-header-divider"></div>
+        <div class="maximum-kpis-grid">
+          <article class="maximum-kpi-card">
             <span>Solicitações</span>
-            <strong data-stat="requests">0</strong>
+            <strong data-kpi="requests">0</strong>
           </article>
-          <article class="maximum-stat-card">
-            <span>Consolidadas</span>
-            <strong data-stat="companies">0</strong>
+          <article class="maximum-kpi-card">
+            <span>Processos</span>
+            <strong data-kpi="processes">0</strong>
           </article>
+          <article class="maximum-kpi-card">
+            <span>Obrigações</span>
+            <strong data-kpi="obligations">0</strong>
+          </article>
+          <article class="maximum-kpi-card">
+            <span>Total</span>
+            <strong data-kpi="total">0</strong>
+          </article>
+        </div>
+        <div class="maximum-sync-row">
+          <span class="maximum-sync-label">Ainda sem sincronização</span>
         </div>
       </header>
 
-      <section class="maximum-token-section">
-        <div class="maximum-token-notice"></div>
-        <form class="maximum-token-form">
-          <div class="maximum-input-group maximum-input-group--token">
-            <label for="maximum-token-input">API Token</label>
-            <input id="maximum-token-input" type="password" placeholder="Cole aqui o API Token gerado no Acessórias" autocomplete="off" />
-          </div>
-          <div class="maximum-token-actions">
-            <button type="submit" class="maximum-primary-button">Salvar token</button>
-            <button type="button" class="maximum-secondary-button" data-action="refresh">Atualizar agora</button>
-            <button type="button" class="maximum-secondary-button" data-action="clear-token">Limpar token</button>
-            <button type="button" class="maximum-secondary-button" data-action="mark-all-read">Marcar tudo como lido</button>
-          </div>
-        </form>
-        <div class="maximum-last-sync"></div>
-      </section>
-
       <section class="maximum-toolbar">
         <div class="maximum-input-group maximum-input-group--wide">
-          <label for="maximum-search">Buscar</label>
+          <label for="maximum-search">Barra de Busca</label>
           <input id="maximum-search" type="search" placeholder="Busque por empresa, processo, obrigação ou solicitação" />
         </div>
         <div class="maximum-input-group">
-          <label for="maximum-date">Filtrar por data</label>
+          <label for="maximum-date">Filtrar</label>
           <select id="maximum-date">
             <option value="all">Todas</option>
             <option value="today">Hoje</option>
@@ -415,9 +427,9 @@
           </select>
         </div>
         <div class="maximum-input-group">
-          <label for="maximum-sort">Ordenar por hora</label>
+          <label for="maximum-sort">Ordenar</label>
           <select id="maximum-sort">
-            <option value="desc">Mais recente primeiro</option>
+            <option value="desc">Mais recente</option>
             <option value="asc">Hora crescente</option>
           </select>
         </div>
@@ -427,11 +439,37 @@
         </label>
       </section>
 
+      <section class="maximum-alert-slot"></section>
+
       <section class="maximum-content">
         <div class="maximum-notification-list"></div>
         <div class="maximum-content-footer"></div>
       </section>
     </aside>
+
+    <div class="maximum-settings-backdrop" data-open="false"></div>
+    <section class="maximum-settings-modal" data-open="false" aria-label="Modal de chave da API">
+      <div class="maximum-settings-modal__header">
+        <div>
+          <h2>Configurar chave da API</h2>
+          <p>Informe o token gerado no Acessórias pela engrenagem do canto superior direito.</p>
+        </div>
+        <button type="button" class="maximum-icon-button maximum-icon-button--close" aria-label="Fechar modal">✕</button>
+      </div>
+      <div class="maximum-settings-modal__body">
+        <div class="maximum-input-group">
+          <label for="maximum-token-input">Chave API</label>
+          <input id="maximum-token-input" type="password" placeholder="Cole aqui a chave da API" autocomplete="off" />
+        </div>
+        <p class="maximum-modal-sync-info"></p>
+      </div>
+      <div class="maximum-settings-modal__actions">
+        <button type="button" class="maximum-primary-button" data-action="save-token">Salvar chave</button>
+        <button type="button" class="maximum-secondary-button" data-action="refresh">Atualizar agora</button>
+        <button type="button" class="maximum-secondary-button" data-action="clear-token">Limpar chave</button>
+        <button type="button" class="maximum-secondary-button" data-action="mark-all-read">Marcar tudo como lido</button>
+      </div>
+    </section>
   `;
 
   document.documentElement.appendChild(root);
@@ -440,55 +478,67 @@
   elements.toggleBadge = root.querySelector('.maximum-toggle-badge');
   elements.overlay = root.querySelector('.maximum-overlay');
   elements.panel = root.querySelector('.maximum-panel');
-  elements.syncPill = root.querySelector('.maximum-sync-pill');
-  elements.tokenNotice = root.querySelector('.maximum-token-notice');
-  elements.tokenForm = root.querySelector('.maximum-token-form');
-  elements.tokenInput = root.querySelector('#maximum-token-input');
-  elements.saveTokenButton = elements.tokenForm.querySelector('.maximum-primary-button');
-  elements.clearTokenButton = root.querySelector('[data-action="clear-token"]');
-  elements.refreshButton = root.querySelector('[data-action="refresh"]');
-  elements.markAllReadButton = root.querySelector('[data-action="mark-all-read"]');
+  elements.closeButton = root.querySelector('.maximum-close-button');
+  elements.statusText = root.querySelector('.maximum-status-text');
+  elements.statusPill = root.querySelector('.maximum-status-pill');
+  elements.settingsButton = root.querySelector('.maximum-icon-button');
+  elements.pageLabel = root.querySelector('.maximum-page-label');
+  elements.syncLabel = root.querySelector('.maximum-sync-label');
+  elements.requests = root.querySelector('[data-kpi="requests"]');
+  elements.processes = root.querySelector('[data-kpi="processes"]');
+  elements.obligations = root.querySelector('[data-kpi="obligations"]');
+  elements.total = root.querySelector('[data-kpi="total"]');
   elements.searchInput = root.querySelector('#maximum-search');
   elements.dateSelect = root.querySelector('#maximum-date');
   elements.sortSelect = root.querySelector('#maximum-sort');
   elements.unreadCheckbox = root.querySelector('#maximum-unread-only');
   elements.list = root.querySelector('.maximum-notification-list');
   elements.footer = root.querySelector('.maximum-content-footer');
-  elements.statsTotal = root.querySelector('[data-stat="total"]');
-  elements.statsUnread = root.querySelector('[data-stat="unread"]');
-  elements.statsObligations = root.querySelector('[data-stat="obligations"]');
-  elements.statsProcesses = root.querySelector('[data-stat="processes"]');
-  elements.statsRequests = root.querySelector('[data-stat="requests"]');
-  elements.statsCompanies = root.querySelector('[data-stat="companies"]');
-  elements.pageLabel = root.querySelector('.maximum-page-label');
-  elements.lastSyncLabel = root.querySelector('.maximum-last-sync');
-  elements.closeButton = root.querySelector('.maximum-close-button');
+  elements.alert = root.querySelector('.maximum-alert-slot');
+  elements.settingsBackdrop = root.querySelector('.maximum-settings-backdrop');
+  elements.settingsModal = root.querySelector('.maximum-settings-modal');
+  elements.settingsClose = root.querySelector('.maximum-icon-button--close');
+  elements.tokenInput = root.querySelector('#maximum-token-input');
+  elements.saveToken = root.querySelector('[data-action="save-token"]');
+  elements.clearToken = root.querySelector('[data-action="clear-token"]');
+  elements.refreshButton = root.querySelector('[data-action="refresh"]');
+  elements.markAllRead = root.querySelector('[data-action="mark-all-read"]');
+  elements.modalSyncInfo = root.querySelector('.maximum-modal-sync-info');
 
   const setOpen = (value) => {
     state.open = value;
     render();
   };
 
+  const setSettingsOpen = (value) => {
+    state.settingsOpen = value;
+    render();
+  };
+
   elements.toggle.addEventListener('click', () => setOpen(!state.open));
   elements.overlay.addEventListener('click', () => setOpen(false));
   elements.closeButton.addEventListener('click', () => setOpen(false));
+  elements.settingsButton.addEventListener('click', () => setSettingsOpen(true));
+  elements.settingsBackdrop.addEventListener('click', () => setSettingsOpen(false));
+  elements.settingsClose.addEventListener('click', () => setSettingsOpen(false));
 
-  elements.tokenForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
+  elements.saveToken.addEventListener('click', async () => {
     const token = elements.tokenInput.value.trim();
     state.tokenValue = token;
-    elements.saveTokenButton.disabled = true;
+    elements.saveToken.disabled = true;
 
     try {
       const response = await runtimeMessage({ type: 'maximum:save-token', token });
       state.feed = response.feed;
       state.settings = response.settings;
       state.pageContext = response.pageContext || state.pageContext;
+      setSettingsOpen(false);
     } catch (error) {
       state.feed.errorMessage = error.message;
-      state.feed.status = 'error';
+      state.feed.status = 'inactive';
+      render();
     } finally {
-      elements.saveTokenButton.disabled = false;
+      elements.saveToken.disabled = false;
       render();
     }
   });
@@ -501,12 +551,12 @@
       render();
     } catch (error) {
       state.feed.errorMessage = error.message;
-      state.feed.status = 'error';
+      state.feed.status = 'inactive';
       render();
     }
   });
 
-  elements.clearTokenButton.addEventListener('click', async () => {
+  elements.clearToken.addEventListener('click', async () => {
     state.tokenValue = '';
     try {
       const response = await runtimeMessage({ type: 'maximum:clear-token' });
@@ -515,12 +565,12 @@
       render();
     } catch (error) {
       state.feed.errorMessage = error.message;
-      state.feed.status = 'error';
+      state.feed.status = 'inactive';
       render();
     }
   });
 
-  elements.markAllReadButton.addEventListener('click', async () => {
+  elements.markAllRead.addEventListener('click', async () => {
     try {
       const response = await runtimeMessage({ type: 'maximum:mark-all-read' });
       state.feed = response.feed;
@@ -528,7 +578,7 @@
       render();
     } catch (error) {
       state.feed.errorMessage = error.message;
-      state.feed.status = 'error';
+      state.feed.status = 'inactive';
       render();
     }
   });
@@ -570,12 +620,17 @@
       render();
     } catch (error) {
       state.feed.errorMessage = error.message;
-      state.feed.status = 'error';
+      state.feed.status = 'inactive';
       render();
     }
   });
 
   document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && state.settingsOpen) {
+      setSettingsOpen(false);
+      return;
+    }
+
     if (event.key === 'Escape' && state.open) {
       setOpen(false);
     }
