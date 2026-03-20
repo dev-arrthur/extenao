@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "MaximumNotificações",
-  "version": "2.0.1",
-  "description": "Monitora obrigações, processos e solicitações do Acessórias com um painel lateral moderno em tema light marsala.",
+  "name": "Maximum Notificacoes",
+  "version": "2.0.2",
+  "description": "Monitora obrigacoes, processos e solicitacoes do Acessorias com um painel lateral moderno em tema light marsala.",
   "permissions": [
     "storage",
     "alarms"
